@@ -139,7 +139,7 @@ function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initial
 			-- Prefix action name to keep it unique:
 			local fullActionName = `{name}/{actionName}`
 			combinedSilo._Modifiers[fullActionName] = function(s, ...: any)
-				s[name] = modifier((s :: { [string]: any })[name], ...)
+				s[name] = modifier(table.clone((s :: { [string]: any })[name]), ...)
 				return s
 			end
 		end
