@@ -7,14 +7,14 @@
 	@type State<S> {[string]: any}
 	Represents state.
 ]=]
-export type State<S> = S & { [string]: any }
+export type State<S> = S
 
 --[=[
 	@within Silo
 	@type Modifier<S> (State<S>, any) -> ()
 	A function that modifies state.
 ]=]
-export type Modifier<S> = (State<S>, any) -> ()
+export type Modifier<S> = (State<S>, ...any) -> ()
 
 --[=[
 	@within Silo
@@ -40,7 +40,6 @@ export type Silo<S, A> = {
 	Watch: <T>(self: Silo<S, A>, selector: (State<S>) -> T, onChange: (T) -> ()) -> () -> (),
 }
 
-local TableWatcher = require(script.TableWatcher)
 local Util = require(script.Util)
 
 --[=[
@@ -86,8 +85,8 @@ Silo.__index = Silo
 function Silo.new<S, A>(defaultState: State<S>, modifiers: { [string]: Modifier<S> }?): Silo<S, A>
 	local self = setmetatable({}, Silo)
 
-	self._DefaultState = Util.DeepFreeze(Util.DeepCopy(defaultState))
-	self._State = Util.DeepFreeze(Util.DeepCopy(defaultState))
+	self._DefaultState = table.freeze(table.clone(defaultState))
+	self._State = table.freeze(table.clone(defaultState))
 	self._Modifiers = {} :: { [string]: any }
 	self._Dispatching = false
 	self._Parent = self
@@ -100,11 +99,8 @@ function Silo.new<S, A>(defaultState: State<S>, modifiers: { [string]: Modifier<
 	if modifiers then
 		for actionName, modifier in modifiers do
 			self._Modifiers[actionName] = function(state: State<S>, ...: any)
-				-- Create a watcher to virtually watch for state mutations:
-				local watcher = TableWatcher(state)
-				modifier(watcher :: any, ...)
-				-- Apply state mutations into new state table:
-				return watcher()
+				modifier(state, ...)
+				return state
 			end
 
 			self.Actions[actionName] = function(...: any)
@@ -143,10 +139,8 @@ function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initial
 			-- Prefix action name to keep it unique:
 			local fullActionName = `{name}/{actionName}`
 			combinedSilo._Modifiers[fullActionName] = function(s, ...: any)
-				-- Extend the top-level state from the sub-silo state modification:
-				return Util.Extend(s, {
-					[name] = modifier((s :: { [string]: any })[name], ...),
-				})
+				s[name] = modifier((s :: { [string]: any })[name], ...)
+				return s
 			end
 		end
 		for actionName in silo.Actions do
@@ -227,7 +221,7 @@ function Silo:Dispatch<A>(action: Action<A>)
 	-- Find and invoke the modifier to modify current state:
 	self._Dispatching = true
 	local oldState = self._State
-	local newState = oldState
+	local newState = table.clone(oldState)
 	local modifier = self._Modifiers[action.Name]
 	if modifier then
 		newState = modifier(newState, table.unpack(action.Payload))
@@ -236,7 +230,7 @@ function Silo:Dispatch<A>(action: Action<A>)
 
 	-- State changed:
 	if newState ~= oldState then
-		self._State = Util.DeepFreeze(newState)
+		self._State = table.freeze(newState)
 
 		-- Notify state subscribers of state change:
 		for _, subscriber in self._StateSubscribers do
@@ -353,7 +347,7 @@ function Silo:ResetToDefaultState()
 	local oldState = self._State
 
 	if self._DefaultState ~= oldState then
-		self._State = Util.DeepFreeze(Util.DeepCopy(self._DefaultState))
+		self._State = table.freeze(table.clone(self._DefaultState))
 
 		for _, subscriber in self._StateSubscribers do
 			subscriber(self._State, oldState)
