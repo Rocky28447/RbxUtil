@@ -14,7 +14,7 @@ export type State<S> = S
 	@type Modifier<S> (State<S>, any) -> ()
 	A function that modifies state.
 ]=]
-export type Modifier<S> = (State<S>, ...any) -> ()
+export type Modifier<S> = (State<S>, ...any) -> State<S>?
 
 --[=[
 	@within Silo
@@ -31,11 +31,12 @@ type Action<A> = {
 }
 
 export type Silo<S, A> = {
-	Actions: { [string]: <A>(value: A) -> () },
+	Actions: { [string]: <A>(...A) -> () },
 
 	GetState: (self: Silo<S, A>) -> State<S>,
 	Dispatch: (self: Silo<S, A>, action: Action<A>) -> (),
 	ResetToDefaultState: (self: Silo<S, A>) -> (),
+	OnDispatch: <A>(subscriber: (action: Action<A>) -> ()) -> () -> (),
 	Subscribe: (self: Silo<S, A>, subscriber: (newState: State<S>, oldState: State<S>) -> ()) -> () -> (),
 	Watch: <T>(self: Silo<S, A>, selector: (State<S>) -> T, onChange: (T) -> ()) -> () -> (),
 }
@@ -99,8 +100,7 @@ function Silo.new<S, A>(defaultState: State<S>, modifiers: { [string]: Modifier<
 	if modifiers then
 		for actionName, modifier in modifiers do
 			self._Modifiers[actionName] = function(state: State<S>, ...: any)
-				modifier(state, ...)
-				return state
+				return table.freeze(modifier(state, ...) or state)
 			end
 
 			self.Actions[actionName] = function(...: any)
@@ -139,6 +139,7 @@ function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initial
 			-- Prefix action name to keep it unique:
 			local fullActionName = `{name}/{actionName}`
 			combinedSilo._Modifiers[fullActionName] = function(s, ...: any)
+				s = table.clone(s)
 				s[name] = modifier(table.clone((s :: { [string]: any })[name]), ...)
 				return s
 			end
@@ -213,15 +214,16 @@ function Silo:Dispatch<A>(action: Action<A>)
 		error("can only dispatch from top-level silo", 2)
 	end
 
+	self._Dispatching = true
+
 	-- Notify dispatch subscribers of action dispatch:
 	for _, subscriber in self._DispatchSubscribers do
 		subscriber(action)
 	end
 
 	-- Find and invoke the modifier to modify current state:
-	self._Dispatching = true
 	local oldState = self._State
-	local newState = table.clone(oldState)
+	local newState = oldState
 	local modifier = self._Modifiers[action.Name]
 	if modifier then
 		newState = modifier(newState, table.unpack(action.Payload))
@@ -348,7 +350,6 @@ function Silo:ResetToDefaultState()
 
 	if self._DefaultState ~= oldState then
 		self._State = table.freeze(table.clone(self._DefaultState))
-
 		for _, subscriber in self._StateSubscribers do
 			subscriber(self._State, oldState)
 		end
