@@ -25,16 +25,16 @@ export type Modifier<S> = (State<S>, ...any) -> State<S>?
 	never constructed by hand. Use a silo's Actions table to generate
 	these actions.
 ]=]
-type Action<A> = {
+type Action<P> = {
 	Name: string,
-	Payload: { A },
+	Payload: { P },
 }
 
 export type Silo<S, A> = {
-	Actions: { [string]: <A>(...A) -> () },
+	Actions: { [string]: <P>(...P) -> Action<P> },
 
 	GetState: (self: Silo<S, A>) -> State<S>,
-	Dispatch: (self: Silo<S, A>, action: Action<A>) -> (),
+	Dispatch: <P>(self: Silo<S, A>, action: Action<P>) -> (),
 	ResetToDefaultState: (self: Silo<S, A>) -> (),
 	OnDispatch: <A>(subscriber: (action: Action<A>) -> ()) -> () -> (),
 	Subscribe: (self: Silo<S, A>, subscriber: (newState: State<S>, oldState: State<S>) -> ()) -> () -> (),
@@ -208,7 +208,7 @@ end
 	silo:Dispatch(silo.Actions.DoSomething("something"))
 	```
 ]=]
-function Silo:Dispatch<A>(action: Action<A>)
+function Silo:Dispatch<P>(action: Action<P>)
 	if self._Dispatching then
 		error("cannot dispatch from a modifier", 2)
 	end
@@ -258,7 +258,7 @@ end
 	unsubscribe()
 	```
 ]=]
-function Silo:OnDispatch<A>(subscriber: (action: Action<A>) -> ()): () -> ()
+function Silo:OnDispatch<P>(subscriber: (action: Action<P>) -> ()): () -> ()
 	return self:_subscribeInternal(self._DispatchSubscribers, subscriber)
 end
 
