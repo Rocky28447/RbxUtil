@@ -101,6 +101,7 @@ function Silo.new<S, A>(defaultState: State<S>, modifiers: { [string]: Modifier<
 	if modifiers then
 		for actionName, modifier in modifiers do
 			self._Modifiers[actionName] = function(state: State<S>, ...: any)
+				state = table.clone(state)
 				return table.freeze(modifier(state, ...) or state)
 			end
 
@@ -132,36 +133,36 @@ function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initial
 	end
 
 	local combinedSilo = Silo.new(Util.Extend(state, initialState or {}))
+	local modifiersMap: { [string]: { [string]: Modifier<unknown> } } = {} -- { [ActionName]: { [Name]: Modifier<unknown> } }
 
 	-- Combine modifiers and actions:
 	for name, silo in silos do
 		silo._Parent = combinedSilo
 		for actionName, modifier in silo._Modifiers do
-			-- Prefix action name to keep it unique:
-			local fullActionName = `{name}/{actionName}`
-			combinedSilo._Modifiers[fullActionName] = function(s, ...: any)
-				s = table.clone(s)
-				s[name] = modifier(table.clone((s :: { [string]: any })[name]), ...)
-				return s
+			if modifiersMap[actionName] == nil then
+				modifiersMap[actionName] = {}
 			end
+			modifiersMap[actionName][name] = modifier
 		end
 		for actionName in silo.Actions do
 			if combinedSilo.Actions[actionName] ~= nil then
-				error(`duplicate action name {actionName} found when combining silos`, 2)
-			end
-			-- Update the action creator to include the correct prefixed action name:
-			local fullActionName = `{name}/{actionName}`
-			silo.Actions[actionName] = function(...: any)
-				return {
-					Name = fullActionName,
-					Payload = { ... },
-				}
+				continue
 			end
 			combinedSilo.Actions[actionName] = silo.Actions[actionName]
 		end
 	end
 
-	return combinedSilo
+	for actionName, modifierList in modifiersMap do
+		combinedSilo._Modifiers[actionName] = function(s, ...: any)
+			s = table.clone(s)
+			for name, modifier in modifierList do
+				s[name] = modifier(s[name], ...)
+			end
+			return s
+		end
+	end
+
+	return combinedSilo :: Silo<S, A>
 end
 
 function Silo:_subscribeInternal<T>(subscriberTbl: { T }, subscriber: T): () -> ()
@@ -217,16 +218,15 @@ function Silo:Dispatch<A>(action: Action<A>)
 
 	self._Dispatching = true
 
-	-- Notify dispatch subscribers of action dispatch:
-	for _, subscriber in self._DispatchSubscribers do
-		subscriber(action)
-	end
-
 	-- Find and invoke the modifier to modify current state:
 	local oldState = self._State
 	local newState = oldState
 	local modifier = self._Modifiers[action.Name]
 	if modifier then
+		-- Notify dispatch subscribers of action dispatch:
+		for _, subscriber in self._DispatchSubscribers do
+			subscriber(action)
+		end
 		newState = modifier(newState, table.unpack(action.Payload))
 	end
 	self._Dispatching = false
