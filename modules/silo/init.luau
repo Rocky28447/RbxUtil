@@ -7,7 +7,7 @@
 	@type State<S> {[string]: any}
 	Represents state.
 ]=]
-export type State<S> = S
+export type State<S> = S & {}
 
 --[=[
 	@within Silo
@@ -38,9 +38,10 @@ export type Silo<S, A> = {
 	ResetToDefaultState: (self: Silo<S, A>) -> (),
 	OnDispatch: <A>(subscriber: (action: Action<A>) -> ()) -> () -> (),
 	Subscribe: (self: Silo<S, A>, subscriber: (newState: State<S>, oldState: State<S>) -> ()) -> () -> (),
-	Watch: <T>(self: Silo<S, A>, selector: (State<S>) -> T, onChange: (T) -> ()) -> () -> (),
+	Watch: <T>(self: Silo<S, A>, selector: (state: State<S>) -> T, onChange: (state: State<S>) -> ()) -> () -> (),
 }
 
+local Sift = require(script.Parent.Sift)
 local Util = require(script.Util)
 
 --[=[
@@ -298,20 +299,20 @@ end
 	end)
 	```
 ]=]
-function Silo:Watch<S, T>(selector: (State<S>) -> T, onChange: (T) -> ()): () -> ()
-	local value = selector(self:GetState())
+function Silo:Watch<S, T>(selector: (state: State<S>) -> T, onChange: (state: State<S>) -> ()): () -> ()
+	local deps = { selector(self:GetState()) }
 
 	local unsubscribe = self:Subscribe(function(state)
-		local newValue = selector(state)
-		if newValue == value then
+		local newDeps = { selector(state) }
+		if Sift.Array.equals(deps, newDeps) then
 			return
 		end
-		value = newValue
-		onChange(value)
+		deps = newDeps
+		onChange(self:GetState())
 	end)
 
 	-- Call initial onChange after subscription to verify subscription didn't fail:
-	onChange(value)
+	onChange(self:GetState())
 
 	return unsubscribe
 end
