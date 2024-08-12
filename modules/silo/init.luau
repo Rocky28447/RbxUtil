@@ -38,7 +38,7 @@ export type Silo<S, A> = {
 	ResetToDefaultState: (self: Silo<S, A>) -> (),
 	OnDispatch: <A>(subscriber: (action: Action<A>) -> ()) -> () -> (),
 	Subscribe: (self: Silo<S, A>, subscriber: (newState: State<S>, oldState: State<S>) -> ()) -> () -> (),
-	Watch: <T>(self: Silo<S, A>, selector: (state: State<S>) -> T, onChange: (state: State<S>) -> ()) -> () -> (),
+	Watch: <T>(self: Silo<S, A>, selector: (state: State<S>) -> T, onChange: (value: T, lastValue: T) -> ()) -> () -> (),
 }
 
 local Sift = require(script.Parent.Sift)
@@ -101,8 +101,9 @@ function Silo.new<S, A>(defaultState: State<S>, modifiers: { [string]: Modifier<
 	if modifiers then
 		for actionName, modifier in modifiers do
 			self._Modifiers[actionName] = function(state: State<S>, ...: any)
-				state = table.clone(state)
-				return table.freeze(modifier(state, ...) or state)
+				local nextState = table.clone(state)
+				nextState = modifier(nextState, ...) or nextState
+				return if Sift.Dictionary.equals(state, nextState) then state else table.freeze(nextState)
 			end
 
 			self.Actions[actionName] = function(...: any)
@@ -124,15 +125,15 @@ end
 ]=]
 function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initialState: State<S>?): Silo<S, A>
 	-- Combine state:
-	local state = {}
+	local combinedState = {}
 	for name, silo in silos do
 		if silo._Dispatching then
 			error("cannot combine silos from a modifier", 2)
 		end
-		state[name] = silo:GetState()
+		combinedState[name] = silo:GetState()
 	end
 
-	local combinedSilo = Silo.new(Util.Extend(state, initialState or {}))
+	local combinedSilo = Silo.new(Util.Extend(combinedState, initialState or {}))
 	local modifiersMap: { [string]: { [string]: Modifier<unknown> } } = {} -- { [ActionName]: { [Name]: Modifier<unknown> } }
 
 	-- Combine modifiers and actions:
@@ -153,12 +154,12 @@ function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initial
 	end
 
 	for actionName, modifierList in modifiersMap do
-		combinedSilo._Modifiers[actionName] = function(s, ...: any)
-			s = table.clone(s)
+		combinedSilo._Modifiers[actionName] = function(state, ...: any)
+			local nextState = table.clone(state)
 			for name, modifier in modifierList do
-				s[name] = modifier(s[name], ...)
+				nextState[name] = modifier(state[name], ...)
 			end
-			return s
+			return if Sift.Dictionary.equals(state, nextState) then state else nextState
 		end
 	end
 
@@ -233,11 +234,11 @@ function Silo:Dispatch<P>(action: Action<P>)
 
 	-- State changed:
 	if newState ~= oldState then
-		self._State = table.freeze(newState)
+		self._State = newState
 
 		-- Notify state subscribers of state change:
 		for _, subscriber in self._StateSubscribers do
-			subscriber(newState, oldState)
+			task.defer(subscriber, newState, oldState)
 		end
 	end
 end
@@ -299,20 +300,27 @@ end
 	end)
 	```
 ]=]
-function Silo:Watch<S, T>(selector: (state: State<S>) -> T, onChange: (state: State<S>) -> ()): () -> ()
-	local deps = { selector(self:GetState()) }
+function Silo:Watch<S, T>(selector: (state: State<S>) -> T, onChange: (value: T, lastValue: T) -> ()): () -> ()
+	local lastDeps: T = {} :: T & {}
+	local deps = selector(self:GetState())
+
+	assert(typeof(selector(self:GetState())) == "table", "Selector function must return a table")
 
 	local unsubscribe = self:Subscribe(function(state)
-		local newDeps = { selector(state) }
-		if Sift.Array.equals(deps, newDeps) then
+		local newDeps = selector(state)
+		if Sift.Dictionary.equals(deps, newDeps) then
 			return
 		end
+		lastDeps = deps
 		deps = newDeps
-		onChange(self:GetState())
+		onChange(deps, lastDeps)
 	end)
 
 	-- Call initial onChange after subscription to verify subscription didn't fail:
-	onChange(self:GetState())
+	task.defer(function()
+		deps = selector(self:GetState())
+		onChange(deps, lastDeps)
+	end)
 
 	return unsubscribe
 end
@@ -352,7 +360,7 @@ function Silo:ResetToDefaultState()
 	if self._DefaultState ~= oldState then
 		self._State = table.freeze(table.clone(self._DefaultState))
 		for _, subscriber in self._StateSubscribers do
-			subscriber(self._State, oldState)
+			task.defer(subscriber, self._State, oldState)
 		end
 	end
 end
