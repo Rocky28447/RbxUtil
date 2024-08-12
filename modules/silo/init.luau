@@ -94,6 +94,7 @@ function Silo.new<S, A>(defaultState: State<S>, modifiers: { [string]: Modifier<
 	self._Parent = self
 	self._StateSubscribers = {}
 	self._DispatchSubscribers = {}
+	self._SubscriberQueue = {}
 
 	self.Actions = {}
 
@@ -164,6 +165,10 @@ function Silo.combine<S, A>(silos: { [string]: Silo<unknown, unknown> }, initial
 	end
 
 	return combinedSilo :: Silo<S, A>
+end
+
+function Silo:_queueSubscriber<S>(subscriber: (newState: State<S>, oldState: State<S>) -> ())
+	table.insert(self._SubscriberQueue, subscriber)
 end
 
 function Silo:_subscribeInternal<T>(subscriberTbl: { T }, subscriber: T): () -> ()
@@ -238,7 +243,13 @@ function Silo:Dispatch<P>(action: Action<P>)
 
 		-- Notify state subscribers of state change:
 		for _, subscriber in self._StateSubscribers do
-			task.defer(subscriber, newState, oldState)
+			self:_queueSubscriber(subscriber)
+		end
+		
+		while self._SubscriberQueue[1] do
+			local nextSubscriber = self._SubscriberQueue[1]
+			table.remove(self._SubscriberQueue, 1)
+			nextSubscriber(newState, oldState)
 		end
 	end
 end
@@ -304,7 +315,7 @@ function Silo:Watch<S, T>(selector: (state: State<S>) -> T, onChange: (value: T,
 	local lastDeps: T = {} :: T & {}
 	local deps = selector(self:GetState())
 
-	assert(typeof(selector(self:GetState())) == "table", "Selector function must return a table")
+	assert(typeof(deps) == "table", "Selector function must return a table")
 
 	local unsubscribe = self:Subscribe(function(state)
 		local newDeps = selector(state)
@@ -317,10 +328,7 @@ function Silo:Watch<S, T>(selector: (state: State<S>) -> T, onChange: (value: T,
 	end)
 
 	-- Call initial onChange after subscription to verify subscription didn't fail:
-	task.defer(function()
-		deps = selector(self:GetState())
-		onChange(deps, lastDeps)
-	end)
+	onChange(deps, lastDeps)
 
 	return unsubscribe
 end
@@ -360,7 +368,7 @@ function Silo:ResetToDefaultState()
 	if self._DefaultState ~= oldState then
 		self._State = table.freeze(table.clone(self._DefaultState))
 		for _, subscriber in self._StateSubscribers do
-			task.defer(subscriber, self._State, oldState)
+			subscriber(self._State, oldState)
 		end
 	end
 end
