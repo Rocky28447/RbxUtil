@@ -166,6 +166,7 @@ end
 	Getting the mouse delta is only intended for when the mouse is locked. If the
 	mouse is _not_ locked, this will return a zero Vector2. The mouse can be locked
 	using the `mouse:Lock()` and `mouse:LockCenter()` method.
+	:::
 ]=]
 function Mouse:GetDelta(): Vector2
 	return UserInputService:GetMouseDelta()
@@ -247,6 +248,7 @@ end
 	Be sure to explicitly call `mouse:Unlock()` before cleaning up the mouse.
 	The `Destroy` method does _not_ unlock the mouse since there is no way
 	to guarantee who "owns" the mouse lock.
+	:::
 ]=]
 function Mouse:Lock()
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
@@ -258,6 +260,7 @@ end
 
 	:::caution Must explicitly unlock
 	See cautionary in `Lock` method above.
+	:::
 ]=]
 function Mouse:LockCenter()
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter

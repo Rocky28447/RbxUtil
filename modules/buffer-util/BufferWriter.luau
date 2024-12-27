@@ -69,7 +69,7 @@ end
 ]=]
 function BufferWriter:WriteUInt8(uint8: number)
 	self:_resizeUpTo(self._cursor + 1)
-	buffer.writei8(self._buffer, self._cursor, uint8)
+	buffer.writeu8(self._buffer, self._cursor, uint8)
 	self._cursor += 1
 end
 
@@ -87,7 +87,7 @@ end
 ]=]
 function BufferWriter:WriteUInt16(uint16: number)
 	self:_resizeUpTo(self._cursor + 2)
-	buffer.writei16(self._buffer, self._cursor, uint16)
+	buffer.writeu16(self._buffer, self._cursor, uint16)
 	self._cursor += 2
 end
 
@@ -105,7 +105,7 @@ end
 ]=]
 function BufferWriter:WriteUInt32(uint32: number)
 	self:_resizeUpTo(self._cursor + 4)
-	buffer.writei32(self._buffer, self._cursor, uint32)
+	buffer.writeu32(self._buffer, self._cursor, uint32)
 	self._cursor += 4
 end
 
@@ -142,6 +142,7 @@ end
 	An extra 32-bit integer is stored before the string to mark the
 	length of the string. If the length of the string is always
 	known, it is more memory-efficient to use `WriteStringRaw`.
+	:::
 ]=]
 function BufferWriter:WriteString(str: string, length: number?)
 	local len = if length then math.min(#str, length) else #str
@@ -161,6 +162,7 @@ end
 	read this string from the buffer, as the length of the string is
 	not stored in the buffer. For strings of dynamic/unknown length,
 	use `WriteString` instead.
+	:::
 ]=]
 function BufferWriter:WriteStringRaw(str: string, length: number?)
 	local len = if length then math.min(#str, length) else #str

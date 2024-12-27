@@ -1,9 +1,9 @@
 [package]
 name = "sleitnick/buffer-util"
 description = "Buffer utilities"
-version = "0.3.0"
+version = "0.3.1"
 license = "MIT"
 authors = ["Stephen Leitnick"]
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
-exclude = ["node_modules", "package.json", "**/*.ts"]
+exclude = ["node_modules", "package.json", "**/*.ts", "**/*.test.luau"]

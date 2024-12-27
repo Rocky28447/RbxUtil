@@ -1,6 +1,6 @@
--- Shake
--- Stephen Leitnick
--- December 09, 2021
+--!native
+
+local RunService = game:GetService("RunService")
 
 --[=[
 	@within Shake
@@ -8,9 +8,31 @@
 ]=]
 type UpdateCallbackFn = () -> (Vector3, Vector3, boolean)
 
-local RunService = game:GetService("RunService")
+export type Shake = {
+	Amplitude: number,
+	Frequency: number,
+	FadeInTime: number,
+	FadeOutTime: number,
+	SustainTime: number,
+	Sustain: boolean,
+	PositionInfluence: Vector3,
+	RotationInfluence: Vector3,
+	TimeFunction: () -> number,
 
-local Trove = require(script.Parent.Trove)
+	Start: (self: Shake) -> (),
+	Stop: (self: Shake) -> (),
+	IsShaking: (self: Shake) -> boolean,
+	StopSustain: (self: Shake) -> (),
+	Update: (self: Shake) -> (Vector3, Vector3, boolean),
+	OnSignal: (
+		self: Shake,
+		signal: RBXScriptSignal,
+		callback: (Vector3, Vector3, boolean) -> ()
+	) -> RBXScriptConnection,
+	BindToRenderStep: (self: Shake, name: string, priority: number, callback: (Vector3, Vector3, boolean) -> ()) -> (),
+	Clone: (self: Shake) -> Shake,
+	Destroy: (self: Shake) -> (),
+}
 
 local rng = Random.new()
 local renderId = 0
@@ -52,6 +74,35 @@ local renderId = 0
 	Shakes will automatically stop once the shake has been completed. Shakes can
 	also be used continuously if the `Sustain` property is set to `true`.
 
+	## Fixing drift
+
+	If you are not controlling the initial CFrame of the camera (i.e. using Roblox's camera scripts),
+	then you might run into odd behavior with the above example. This is because Roblox's camera
+	scripts are influenced by the current CFrame value of the camera. Thus, the shake effect causes
+	odd side-effects, especially noticeable at higher FPS.
+
+	The solution is to simply store the camera's CFrame before applying the shake CFrame, and then
+	reapplying this stored CFrame value after rendering is complete (e.g. on Heartbeat).
+
+	```lua
+	local camCf: CFrame
+
+	shake:BindToRenderStep(Shake.NextRenderName(), priority, function(pos, rot, isDone)
+		-- Store the CFrame value that was set from Roblox's camera scripts:
+		camCf = camera.CFrame
+
+		camera.CFrame *= CFrame.new(pos) * CFrame.Angles(rot.X, rot.Y, rot.Z)
+	end)
+
+	RunService.Heartbeat:Connect(function()
+		-- Reapply the camera script CFrame before they run again.
+		-- Heartbeat runs AFTER Roblox has rendered, so it will not affect the camera this frame.
+		camera.CFrame = camCf
+	end)
+	```
+
+	## Configuration
+
 	Here are some more helpful configuration examples:
 
 	```lua
@@ -77,7 +128,7 @@ local renderId = 0
 
 	-- Multiplies against the shake vector to control the final amplitude of the position.
 	-- Can be seen internally as: position = shakeVector * fadeInOut * positionInfluence
-	shake.PositionInfluence = Vector3.new(1, 1, 1)
+	shake.PositionInfluence = Vector3.one
 
 	-- Multiplies against the shake vector to control the final amplitude of the rotation.
 	-- Can be seen internally as: position = shakeVector * fadeInOut * rotationInfluence
@@ -176,8 +227,9 @@ Shake.__index = Shake
 	@return Shake
 	Construct a new Shake instance.
 ]=]
-function Shake.new()
+function Shake.new(): Shake
 	local self = setmetatable({}, Shake)
+
 	self.Amplitude = 1
 	self.Frequency = 1
 	self.FadeInTime = 1
@@ -187,10 +239,13 @@ function Shake.new()
 	self.PositionInfluence = Vector3.one
 	self.RotationInfluence = Vector3.one
 	self.TimeFunction = if RunService:IsRunning() then time else os.clock
-	self._timeOffset = rng:NextNumber(-1e9, 1e9)
+
+	self._timeOffset = rng:NextNumber(-1e6, 1e6)
 	self._startTime = 0
-	self._trove = Trove.new()
 	self._running = false
+	self._signalConnections = {}
+	self._renderBindings = {}
+
 	return self
 end
 
@@ -255,9 +310,6 @@ end
 function Shake:Start()
 	self._startTime = self.TimeFunction()
 	self._running = true
-	self._trove:Add(function()
-		self._running = false
-	end)
 end
 
 --[=[
@@ -268,7 +320,17 @@ end
 	`Destroy` method is called.
 ]=]
 function Shake:Stop()
-	self._trove:Clean()
+	self._running = false
+
+	for _, name in self._renderBindings do
+		RunService:UnbindFromRenderStep(name)
+	end
+	table.clear(self._renderBindings)
+
+	for _, conn in self._signalConnections do
+		conn:Disconnect()
+	end
+	table.clear(self._signalConnections)
 end
 
 --[=[
@@ -318,7 +380,7 @@ function Shake:Update(): (Vector3, Vector3, boolean)
 	local now = self.TimeFunction()
 	local dur = now - self._startTime
 
-	local noiseInput = ((now + self._timeOffset) / self.Frequency) % 1000000
+	local noiseInput = ((now + self._timeOffset) / self.Frequency) % 10000
 
 	local multiplierFadeIn = 1
 	local multiplierFadeOut = 1
@@ -371,9 +433,13 @@ end
 	```
 ]=]
 function Shake:OnSignal(signal, callbackFn: UpdateCallbackFn)
-	return self._trove:Connect(signal, function()
+	local conn = signal:Connect(function()
 		callbackFn(self:Update())
 	end)
+
+	table.insert(self._signalConnections, conn)
+
+	return conn
 end
 
 --[=[
@@ -383,7 +449,7 @@ end
 
 	Bind the `Update` method to RenderStep.
 
-	All bond functions are cleaned up when the shake instance is stopped
+	All bound functions are cleaned up when the shake instance is stopped
 	or destroyed.
 
 	```lua
@@ -397,9 +463,11 @@ end
 	```
 ]=]
 function Shake:BindToRenderStep(name: string, priority: number, callbackFn: UpdateCallbackFn)
-	self._trove:BindToRenderStep(name, priority, function()
+	RunService:BindToRenderStep(name, priority, function()
 		callbackFn(self:Update())
 	end)
+
+	table.insert(self._renderBindings, name)
 end
 
 --[=[
@@ -457,4 +525,8 @@ function Shake:Destroy()
 	self:Stop()
 end
 
-return Shake
+return {
+	new = Shake.new,
+	InverseSquare = Shake.InverseSquare,
+	NextRenderName = Shake.NextRenderName,
+}
