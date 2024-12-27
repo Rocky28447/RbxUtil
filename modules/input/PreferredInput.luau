@@ -128,7 +128,7 @@ local function SetPreferredFromInputType(inputType: Enum.UserInputType)
 	end
 end
 
-PreferredInput.DeterminePreferred(UserInputService:GetLastInputType())
+SetPreferredFromInputType(UserInputService:GetLastInputType())
 UserInputService.LastInputTypeChanged:Connect(SetPreferredFromInputType)
 
 return PreferredInput
